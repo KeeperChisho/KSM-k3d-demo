@@ -1,0 +1,70 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ksm-example
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ksm-example
+  template:
+    metadata:
+      labels:
+        app: ksm-example
+    spec:
+      initContainers:
+      - name: keeper-secrets-init
+        image: keeper/keeper-secrets-manager-writer:latest
+        env:
+        - name: KSM_CONFIG
+          value: "***"
+        - name: SECRETS
+          value: "6hNuHPwKkwt9cQUitYLiWw/field/password > file:/mnt/secrets/PASSWORD"
+        volumeMounts:
+        - name: secrets-volume
+          mountPath: /mnt/secrets
+      containers:
+      - name: nginx
+        image: nginx:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            # Wait until the secret is available
+            while [ ! -f /mnt/secrets/PASSWORD ]; do sleep 1; done
+
+            # Read the secret
+            PASSWORD=$(cat /mnt/secrets/PASSWORD)
+
+            # Ensure the index.html file exists
+            if [ -f /usr/share/nginx/html/index.html ]; then
+              sed -i "s|SECRET_PLACEHOLDER|$PASSWORD|g" /usr/share/nginx/html/index.html
+            fi
+
+            # Start Nginx
+            nginx -g 'daemon off;'
+        volumeMounts:
+        - name: secrets-volume
+          mountPath: /mnt/secrets
+        - name: html-volume
+          mountPath: /usr/share/nginx/html
+          readOnly: false
+      volumes:
+      - name: secrets-volume
+        emptyDir: {}
+      - name: html-volume
+        configMap:
+          name: html-files
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+spec:
+  selector:
+    app: ksm-example
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+  type: ClusterIP
